@@ -219,13 +219,13 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 const API_URL="https://script.google.com/macros/s/AKfycbwr5l7fubs0h2aIWaBXRx-6r3jOVIJNQQ2zGYR1ERMrUWggyU8ECtgZuFNRgvpNFtoX/exec";
-const API_KEY="byJaes9euC4RaVRrHYjNquj4cJF8XdTE";
+let SESSION_TOKEN="";
 const CATS=['Alquiler vivienda','Suministros','Suscripciones','Comida supermercado','Comida fuera','Comida trabajo','Regalos','Autoregalos materiales','Autoregalos no materiales','Eventos/conciertos','Fiesta','Tomar algo','Mascotas','Salud/médicos','Transporte','Viajes','Deporte','Inversiones','Otros'];
 const COLORS=['#7C6FFF','#FF6B9D','#4ECDC4','#FFD166','#FF6B6B','#A8E6CF','#C7F2A4','#F7B731','#FC5C65','#45AAF2','#26DE81','#FD9644','#A55EEA','#2BCBBA','#EB3B5A','#3867D6','#20BF6B','#E55039','#F39C12'];
 const EMOJI={'Alquiler vivienda':'🏠','Suministros':'💡','Suscripciones':'📱','Comida supermercado':'🛒','Comida fuera':'🍽️','Comida trabajo':'☕','Regalos':'🎁','Autoregalos materiales':'🛍️','Autoregalos no materiales':'✨','Eventos/conciertos':'🎫','Fiesta':'🎉','Tomar algo':'🍻','Mascotas':'🐾','Salud/médicos':'💊','Transporte':'🚇','Viajes':'✈️','Deporte':'🏃','Inversiones':'📈','Otros':'📦','Cuenta de ahorros (+/-)':'💰'};
 let allTransactions=[],sheets=[],currentSheet='',budget={},selectedCat='Comida fuera',donutChart=null,analysisData=[],resumenData=[],inversionesData=[];
 
-async function api(p){const url=API_URL+'?'+new URLSearchParams({...p,key:API_KEY});return(await fetch(url)).json();}
+async function api(p){const url=API_URL+'?'+new URLSearchParams({...p,token:SESSION_TOKEN});return(await fetch(url)).json();}
 
 async function init(){
   try{
@@ -517,7 +517,7 @@ async function submitTransaction(){
   if(!date||!desc||isNaN(amount)||amount<=0){res.textContent='Rellena fecha, descripción e importe';res.className='add-res err';return;}
   const btn=document.getElementById('addBtn');btn.disabled=true;btn.textContent='Guardando...';
   try{
-    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'addTransaction',key:API_KEY,date,desc,amount,category:selectedCat,account,sheet})});
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'addTransaction',token:SESSION_TOKEN,date,desc,amount,category:selectedCat,account,sheet})});
     const data=await r.json();if(data.error)throw new Error(data.error);
     res.textContent=`✓ Guardado: ${desc} — ${amount.toFixed(2)} €`;res.className='add-res ok';
     document.getElementById('addDesc').value='';document.getElementById('addAmount').value='';
@@ -536,7 +536,7 @@ function buildCtx(){
 }
 
 async function callClaude(system, messages, maxTokens){
-  const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'askClaude',key:API_KEY,system,messages,max_tokens:maxTokens||1000})});
+  const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'askClaude',token:SESSION_TOKEN,system,messages,max_tokens:maxTokens||1000})});
   const data=await r.json();
   if(data.error)throw new Error(JSON.stringify(data.error));
   return data.content?.map(b=>b.text||'').join('')||'Sin respuesta.';
@@ -800,18 +800,29 @@ function showView(name){
   if(name==='inversiones') renderInversiones();
 }
 
-const APP_PASSWORD = "CAMBIA_ESTA_CLAVE";
-function checkPin(){
+async function checkPin(){
   const val=document.getElementById('pinInput').value;
-  if(val===APP_PASSWORD){
-    document.getElementById('loginScreen').style.display='none';
-    document.getElementById('mainApp').style.display='block';
-    if(!sheets.length) init();
-  } else {
+  if(!val) return;
+  const btn=document.querySelector('#loginScreen button');
+  btn.textContent='Entrando...';btn.disabled=true;
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'login',password:val})});
+    const data=await r.json();
+    if(data.token){
+      SESSION_TOKEN=data.token;
+      document.getElementById('loginScreen').style.display='none';
+      document.getElementById('mainApp').style.display='block';
+      if(!sheets.length) init();
+    } else {
+      document.getElementById('pinError').style.display='block';
+      document.getElementById('pinInput').value='';
+      document.getElementById('pinInput').focus();
+    }
+  }catch(e){
+    document.getElementById('pinError').textContent='Error de conexión';
     document.getElementById('pinError').style.display='block';
-    document.getElementById('pinInput').value='';
-    document.getElementById('pinInput').focus();
   }
+  btn.textContent='Entrar';btn.disabled=false;
 }
 document.getElementById('addDate').value=new Date().toISOString().split('T')[0];
 initAddCats();
