@@ -235,8 +235,12 @@ async function init(){
     const sel=document.getElementById('sheetSelect');
     const mv=sheets.filter(s=>s.includes(' - mov'));
     sel.innerHTML=mv.map(s=>`<option value="${s}">${s.replace(' - mov','')}</option>`).join('');
-    const mar=mv.find(s=>s.toLowerCase().includes('marzo')||s.toLowerCase().includes('mar'));
-    if(mar)sel.value=mar;
+    const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const now=new Date();
+    const curMonthName=monthNames[now.getMonth()]+' '+(now.getFullYear()-2000);
+    const curSheet=mv.find(s=>s.replace(' - mov','')===curMonthName);
+    const fallback=mv.find(s=>s.toLowerCase().includes('marzo'));
+    if(curSheet)sel.value=curSheet;else if(fallback)sel.value=fallback;
     document.getElementById('topStatus').innerHTML='<span class="s-ok">● conectado</span>';
     fillAddSheets();
     const rr=await api({action:'getMonthData',sheet:'RESUMEN'});
@@ -265,6 +269,10 @@ async function loadSheet(){
     if(mr.error)throw new Error('No encontré '+mv);
     parseBudget(rr.error?[]:rr.rows);
     parseTransactions(mr.rows);
+    evolucionData=parseEvolucion(rr.error?[]:rr.rows);
+    const resRows=rr.error?[]:rr.rows;
+    window.excedente=parseFloat(resRows[14]?.[8])||0;
+    window.diasExcedente=parseInt(resRows[16]?.[8])||0;
     analysisData=ar.error?[]:ar.rows;
     renderDashboard();renderTransactions();renderPvR();renderSidebar();
   }catch(e){document.getElementById('resumenContent').innerHTML=`<div class="loading-area" style="color:var(--red)">Error: ${e.message}</div>`;}
@@ -304,6 +312,22 @@ function parseBudget(rows){
 const EXCLUIR_GASTOS = ['Cuenta de ahorros (+/-)'];
 const EXCLUIR_INGRESOS = ['Ahorro'];
 
+function parseEvolucion(rows){
+  const data=[];
+  for(const r of rows.slice(28)){
+    if(!r[13]) break;
+    const d=new Date(r[13]);
+    if(isNaN(d.getTime())) break;
+    const real=parseFloat(r[14]);
+    const minimo=parseFloat(r[20]);
+    if(isNaN(real)) break;
+    data.push({fecha:d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}),real,minimo:isNaN(minimo)?null:minimo});
+  }
+  return data;
+}
+
+let evolucionData=[];
+
 function getNet(){
   const b={};
   allTransactions.filter(t=>t.tipo==='gasto'&&!EXCLUIR_GASTOS.includes(t.cat)).forEach(t=>{b[t.cat]=(b[t.cat]||0)+t.amount;});
@@ -325,27 +349,37 @@ function renderDashboard(){
   const top6=catsSorted.slice(0,6);
   const maxAmt=top6.length?top6[0][1]:1;
 
-  let html=`<div class="hero-grid">
+  const invMesDash=allTransactions.filter(t=>t.tipo==='gasto'&&t.cat==='Inversiones').reduce((s,t)=>s+t.amount,0);
+  const excedente=window.excedente||0;
+  const diasExc=window.diasExcedente||0;
+  const excColor=excedente>=0?'var(--green)':'var(--red)';
+  const excLabel=excedente>=0?'excedente':'déficit';
+  const diasLabel=excedente>=0?`${diasExc} días con excedente`:`${diasExc} días sin gastar`;
+
+  let html=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
     <div class="hero-card pu"><div class="hero-label">Total gastado</div><div class="hero-val" style="color:var(--c1)">${total.toFixed(0)} €</div><div class="hero-sub">${allTransactions.filter(t=>t.tipo==='gasto').length} movimientos</div></div>
     <div class="hero-card pi"><div class="hero-label">Ingresos</div><div class="hero-val" style="color:var(--c2)">${totalIng>0?totalIng.toFixed(0)+' €':'—'}</div><div class="hero-sub">este mes</div></div>
     <div class="hero-card te"><div class="hero-label">Balance</div><div class="hero-val" style="color:${balance>=0?'var(--green)':'var(--red)'}">${totalIng>0?(balance>0?'+':'')+balance.toFixed(0)+' €':'—'}</div><div class="hero-sub">ingresos − gastos</div></div>
-  </div>`;
-
-  html+=`<div class="two-col"><div class="card"><div class="card-title">Presupuesto del mes</div>
-    <div style="display:flex;align-items:center;gap:20px;margin-bottom:16px">
-      <div class="donut-wrap"><canvas id="donutC" width="130" height="130"></canvas>
-        <div class="donut-center"><div class="donut-val" style="color:${quedaCol}">${Math.abs(queda).toFixed(0)}€</div><div class="donut-lbl">${queda>=0?'disponible':'excedido'}</div></div>
-      </div>
-      <div style="flex:1">
-        <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Gastado: <strong style="color:var(--text)">${total.toFixed(0)}€</strong> / <strong style="color:var(--text)">${totalPrev.toFixed(0)}€</strong></div>
-        <div style="height:10px;background:var(--surface3);border-radius:5px;overflow:hidden">
-          <div style="height:100%;width:${pct.toFixed(1)}%;background:${pct>100?'var(--red)':pct>80?'var(--c4)':'var(--c1)'};border-radius:5px;transition:width 0.5s"></div>
+  </div>
+  <div class="two-col">
+    <div class="card"><div class="card-title">Presupuesto del mes</div>
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:16px">
+        <div class="donut-wrap"><canvas id="donutC" width="130" height="130"></canvas>
+          <div class="donut-center"><div class="donut-val" style="color:${quedaCol}">${Math.abs(queda).toFixed(0)}€</div><div class="donut-lbl">${queda>=0?'disponible':'excedido'}</div></div>
         </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:6px">${pct.toFixed(0)}% del presupuesto usado</div>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Gastado: <strong style="color:var(--text)">${total.toFixed(0)}€</strong> / <strong style="color:var(--text)">${totalPrev.toFixed(0)}€</strong></div>
+          <div style="height:10px;background:var(--surface3);border-radius:5px;overflow:hidden">
+            <div style="height:100%;width:${pct.toFixed(1)}%;background:${pct>100?'var(--red)':pct>80?'var(--c4)':'var(--c1)'};border-radius:5px;transition:width 0.5s"></div>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px">${pct.toFixed(0)}% del presupuesto usado</div>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:14px;display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">Invertido este mes</div><div style="font-size:20px;font-family:var(--mono);font-weight:700;color:var(--c4)">${invMesDash.toFixed(0)} €</div></div>
       </div>
     </div>
-  </div>
-  <div class="card"><div class="card-title">Top categorías</div><div class="cat-chart">`;
+    <div class="card"><div class="card-title">Top categorías</div><div class="cat-chart">`;
 
   top6.forEach(([cat,amt],i)=>{
     const col=COLORS[i%COLORS.length];
@@ -353,6 +387,17 @@ function renderDashboard(){
     html+=`<div class="cat-row"><span style="font-size:15px;width:22px;text-align:center">${EMOJI[cat]||'📦'}</span><span class="cat-name">${cat}</span><div class="cat-bw"><div class="cat-bf" style="width:${pctBar}%;background:${col}"></div></div><span class="cat-amt" style="color:${col}">${amt.toFixed(0)} €</span></div>`;
   });
   html+=`</div></div></div>`;
+
+  if(evolucionData.length>1){
+    html+=`<div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:stretch">
+      <div class="card"><div class="card-title">Evolución Caja Rural · real vs mínimo esperado</div><div style="height:180px"><canvas id="chartEvol"></canvas></div></div>
+      <div class="card" style="min-width:140px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
+        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">${excLabel}</div>
+        <div style="font-size:28px;font-family:var(--mono);font-weight:700;color:${excColor}">${excedente>=0?'+':''}${excedente.toFixed(0)}<span style="font-size:16px"> €</span></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">${diasLabel}</div>
+      </div>
+    </div>`;
+  }
 
   html+=`<div class="card"><div class="card-title">Últimos movimientos</div><div class="tx-list2">`;
   allTransactions.slice(0,10).forEach(t=>{
@@ -371,6 +416,15 @@ function renderDashboard(){
     const labels=top6.map(([k])=>k);const data=top6.map(([,v])=>v);
     if(otros>0){labels.push('Otros');data.push(otros);}
     donutChart=new Chart(canvas,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:COLORS.slice(0,data.length),borderWidth:0,hoverOffset:4}]},options:{cutout:'68%',plugins:{legend:{display:false},tooltip:{enabled:false}},animation:{duration:600}}});
+    const ce=document.getElementById('chartEvol');
+    if(ce&&evolucionData.length>1){
+      const step=Math.ceil(evolucionData.length/25);
+      const filtered=evolucionData.filter((_,i)=>i%step===0||i===evolucionData.length-1);
+      new Chart(ce,{type:'line',data:{labels:filtered.map(d=>d.fecha),datasets:[
+        {label:'Saldo real CR',data:filtered.map(d=>d.real),borderColor:'#7C6FFF',backgroundColor:'rgba(124,111,255,0.1)',tension:0.3,fill:true,pointRadius:2},
+        {label:'Mínimo esperado',data:filtered.map(d=>d.minimo),borderColor:'#FFD166',backgroundColor:'transparent',tension:0.3,borderDash:[4,4],pointRadius:0}
+      ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#9896B0',font:{size:11},boxWidth:12}}},scales:{x:{ticks:{color:'#5A5870',font:{size:9},maxRotation:45},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#5A5870',font:{size:10},callback:v=>v.toFixed(0)+'€'},grid:{color:'rgba(255,255,255,0.04)'}}}}});
+    }
   },100);
 }
 
@@ -706,13 +760,28 @@ function renderInversiones(){
   const rentabilidad=parseFloat(r4[7])||0;
   const mediaMensual=parseFloat(r4[9])||0;
 
-  // Rows 6+ (index 6-18): monthly contributions — skip empty ones
+  // Posiciones activas (filas 6-18, índices 5-17)
   const monthly=[];
-  for(let i=6;i<19;i++){
+  for(let i=6;i<18;i++){
     const r=rows[i];
     if(!r||!r[0]||!r[2])continue;
-    monthly.push({mes:r[0],importe:parseFloat(r[1])||0,activo:r[2],plataforma:r[3],tipo:r[4],capital:parseFloat(r[5])||0,valor:parseFloat(r[6])||0,diff:parseFloat(r[7])||0,rent:parseFloat(r[8])||0,fecha:r[9]?new Date(r[9]).toLocaleDateString('es-ES'):''});
+    monthly.push({rowIdx:i+1,mes:r[0],importe:parseFloat(r[1])||0,activo:r[2],plataforma:r[3],tipo:r[4],capital:parseFloat(r[5])||0,valor:parseFloat(r[6])||0,diff:parseFloat(r[7])||0,rent:parseFloat(r[8])||0,fecha:r[9]?new Date(r[9]).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}):''});
   }
+
+  // Sin clasificar: filas desde índice 20, que tienen capital/fecha pero no activo
+  const sinClasificar=[];
+  for(let i=20;i<rows.length;i++){
+    const r=rows[i];
+    if(!r||(!r[5]&&!r[7]&&!r[8]))continue;
+    if(!r[2]||!r[3]||!r[4]){
+      sinClasificar.push({rowIdx:i+1,capital:parseFloat(r[5])||0,fecha:r[6]?new Date(r[6]).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'2-digit'}):'',nota:r[7]||'',importe:parseFloat(r[8])||0,comentarios:r[9]||''});
+    }
+  }
+
+  // Existing activos for dropdown
+  const activosExistentes=[...new Set(monthly.map(m=>m.activo))];
+  const plataformasExistentes=[...new Set(monthly.map(m=>m.plataforma))];
+  const tiposExistentes=[...new Set(monthly.map(m=>m.tipo))];
 
   const ganColor=ganancia>=0?'var(--green)':'var(--red)';
   const rentColor=rentabilidad>=0?'var(--green)':'var(--red)';
@@ -722,74 +791,130 @@ function renderInversiones(){
     <div class="hero-card pu"><div class="hero-label">Capital aportado</div><div class="hero-val" style="color:var(--c1)">${capitalTotal.toFixed(0)} €</div><div class="hero-sub">total invertido</div></div>
     <div class="hero-card pi"><div class="hero-label">Patrimonio actual</div><div class="hero-val" style="color:var(--c2)">${patrimonioTotal.toFixed(0)} €</div><div class="hero-sub">valor de mercado</div></div>
     <div class="hero-card te"><div class="hero-label">Ganancia / pérdida</div><div class="hero-val" style="color:${ganColor}">${ganancia>=0?'+':''}${ganancia.toFixed(0)} €</div><div class="hero-sub">rentabilidad: <strong style="color:${rentColor}">${(rentabilidad*100).toFixed(2)}%</strong></div></div>
-  </div>
+  </div>`;
 
-  <div class="card">
-    <div class="card-title">Posiciones activas</div>
+  // Sin clasificar alert
+  if(sinClasificar.length>0){
+    html+=`<div style="background:var(--redl);border:1px solid var(--red);border-radius:var(--rl);padding:16px 20px">
+      <div style="font-size:14px;font-weight:600;color:var(--red);margin-bottom:12px">⚠ ${sinClasificar.length} transacción${sinClasificar.length>1?'es':''} sin clasificar</div>
+      <div style="display:flex;flex-direction:column;gap:10px">`;
+    sinClasificar.forEach(sc=>{
+      html+=`<div style="background:var(--surface);border-radius:var(--r);padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div>
+            <span style="font-size:13px;font-weight:500;color:var(--text)">${sc.nota||'Sin descripción'}</span>
+            <span style="font-size:11px;color:var(--text3);margin-left:8px">${sc.fecha} · ${sc.capital.toFixed(0)}€</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center">
+          <input list="list-activos-${sc.rowIdx}" id="activo-${sc.rowIdx}" placeholder="Activo" style="border:1px solid var(--border2);border-radius:var(--r);padding:7px 10px;font-size:12px;font-family:var(--sans);color:var(--text);background:var(--surface2)"/>
+          <datalist id="list-activos-${sc.rowIdx}">${activosExistentes.map(a=>`<option value="${a}">`).join('')}</datalist>
+          <input list="list-plat-${sc.rowIdx}" id="plat-${sc.rowIdx}" placeholder="Plataforma" style="border:1px solid var(--border2);border-radius:var(--r);padding:7px 10px;font-size:12px;font-family:var(--sans);color:var(--text);background:var(--surface2)"/>
+          <datalist id="list-plat-${sc.rowIdx}">${plataformasExistentes.map(p=>`<option value="${p}">`).join('')}</datalist>
+          <input list="list-tipo-${sc.rowIdx}" id="tipo-${sc.rowIdx}" placeholder="Tipo" style="border:1px solid var(--border2);border-radius:var(--r);padding:7px 10px;font-size:12px;font-family:var(--sans);color:var(--text);background:var(--surface2)"/>
+          <datalist id="list-tipo-${sc.rowIdx}">${tiposExistentes.map(t=>`<option value="${t}">`).join('')}</datalist>
+          <button onclick="clasificar(${sc.rowIdx})" style="background:var(--c1);color:white;border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-family:var(--sans);font-weight:500;cursor:pointer;white-space:nowrap">Clasificar</button>
+        </div>
+        <div id="classify-result-${sc.rowIdx}" style="font-size:11px;margin-top:6px;display:none"></div>
+      </div>`;
+    });
+    html+=`</div></div>`;
+  } else {
+    html+=`<div style="background:var(--greenl);border:1px solid var(--green);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--green)">✓ Todas las transacciones están clasificadas</div>`;
+  }
+
+  // Posiciones activas table
+  html+=`<div class="card"><div class="card-title">Posiciones activas</div>
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead>
-        <tr style="border-bottom:1px solid var(--border2)">
-          <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500;white-space:nowrap">Mes</th>
-          <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500">Activo</th>
-          <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500">Plataforma</th>
-          <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500">Tipo</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Aportado</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Valor</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Dif.</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Rent.</th>
-          <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500;white-space:nowrap">F. valor</th>
-        </tr>
-      </thead>
+      <thead><tr style="border-bottom:1px solid var(--border2)">
+        <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500">Activo</th>
+        <th style="text-align:left;padding:8px 10px;color:var(--text3);font-weight:500">Plataforma</th>
+        <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Aportado</th>
+        <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Valor actual</th>
+        <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Dif.</th>
+        <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Rent.</th>
+        <th style="text-align:right;padding:8px 10px;color:var(--text3);font-weight:500">Actualizar</th>
+      </tr></thead>
       <tbody>`;
 
   monthly.forEach(m=>{
     const dCol=m.diff>=0?'var(--green)':'var(--red)';
     const rCol=m.rent>=0?'var(--green)':'var(--red)';
-    html+=`<tr style="border-bottom:1px solid var(--border);transition:background 0.1s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
-      <td style="padding:10px 10px;color:var(--text2);white-space:nowrap">${m.mes}</td>
-      <td style="padding:10px 10px;color:var(--text);font-weight:500">${m.activo}</td>
-      <td style="padding:10px 10px"><span style="background:var(--surface2);color:var(--text2);padding:2px 8px;border-radius:20px;font-size:11px">${m.plataforma}</span></td>
-      <td style="padding:10px 10px;color:var(--text3);font-size:11px">${m.tipo}</td>
-      <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:var(--text)">${m.capital.toFixed(0)} €</td>
-      <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:var(--c2)">${m.valor.toFixed(0)} €</td>
-      <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:${dCol}">${m.diff>=0?'+':''}${m.diff.toFixed(0)} €</td>
-      <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:${rCol}">${(m.rent*100).toFixed(2)}%</td>
-      <td style="padding:10px 10px;text-align:right;color:var(--text3);font-size:11px">${m.fecha}</td>
+    html+=`<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <td style="padding:10px;font-weight:500;color:var(--text)">${m.activo}</td>
+      <td style="padding:10px"><span style="background:var(--surface2);color:var(--text2);padding:2px 8px;border-radius:20px;font-size:11px">${m.plataforma}</span></td>
+      <td style="padding:10px;text-align:right;font-family:var(--mono)">${m.capital.toFixed(0)} €</td>
+      <td style="padding:10px;text-align:right;font-family:var(--mono);color:var(--c2)">${m.valor.toFixed(0)} €</td>
+      <td style="padding:10px;text-align:right;font-family:var(--mono);color:${dCol}">${m.diff>=0?'+':''}${m.diff.toFixed(0)} €</td>
+      <td style="padding:10px;text-align:right;font-family:var(--mono);color:${rCol}">${(m.rent*100).toFixed(2)}%</td>
+      <td style="padding:10px;text-align:right">
+        <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center">
+          <input type="number" id="valor-${m.rowIdx}" placeholder="${m.valor.toFixed(0)}" step="0.01" style="width:80px;border:1px solid var(--border2);border-radius:var(--r);padding:5px 8px;font-size:11px;font-family:var(--mono);color:var(--text);background:var(--surface2);text-align:right"/>
+          <button onclick="actualizarValor('${m.activo}','${m.plataforma}','${m.tipo}',${m.rowIdx})" style="background:var(--c3);color:white;border:none;border-radius:var(--r);padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap">✓</button>
+        </div>
+      </td>
     </tr>`;
   });
 
-  // Totals row
   const totCapital=monthly.reduce((s,m)=>s+m.capital,0);
   const totValor=monthly.reduce((s,m)=>s+m.valor,0);
-  const totDiff=monthly.reduce((s,m)=>s+m.diff,0);
+  const totDiff=totValor-totCapital;
   html+=`<tr style="border-top:1px solid var(--border2);background:var(--surface2)">
-    <td colspan="4" style="padding:10px 10px;color:var(--text2);font-weight:500">Total</td>
-    <td style="padding:10px 10px;text-align:right;font-family:var(--mono);font-weight:600;color:var(--text)">${totCapital.toFixed(0)} €</td>
-    <td style="padding:10px 10px;text-align:right;font-family:var(--mono);font-weight:600;color:var(--c2)">${totValor.toFixed(0)} €</td>
-    <td style="padding:10px 10px;text-align:right;font-family:var(--mono);font-weight:600;color:${totDiff>=0?'var(--green)':'var(--red)'}">${totDiff>=0?'+':''}${totDiff.toFixed(0)} €</td>
+    <td colspan="3" style="padding:10px;color:var(--text2);font-weight:500">Total</td>
+    <td style="padding:10px;text-align:right;font-family:var(--mono);font-weight:600">${totCapital.toFixed(0)} €</td>
+    <td style="padding:10px;text-align:right;font-family:var(--mono);font-weight:600;color:var(--c2)">${totValor.toFixed(0)} €</td>
+    <td style="padding:10px;text-align:right;font-family:var(--mono);font-weight:600;color:${totDiff>=0?'var(--green)':'var(--red)'}">${totDiff>=0?'+':''}${totDiff.toFixed(0)} €</td>
     <td colspan="2"></td>
   </tr>`;
 
   html+=`</tbody></table></div></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <div class="card" style="flex:1;min-width:160px;text-align:center">
-      <div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Media mensual</div>
-      <div style="font-size:24px;font-family:var(--mono);font-weight:700;color:var(--c4)">${mediaMensual.toFixed(0)} €</div>
-    </div>
-    <div class="card" style="flex:1;min-width:160px;text-align:center">
-      <div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Posiciones</div>
-      <div style="font-size:24px;font-family:var(--mono);font-weight:700;color:var(--c1)">${monthly.length}</div>
-    </div>
-    <div class="card" style="flex:1;min-width:160px;text-align:center">
-      <div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Rentabilidad</div>
-      <div style="font-size:24px;font-family:var(--mono);font-weight:700;color:${rentColor}">${(rentabilidad*100).toFixed(2)}%</div>
-    </div>
+    <div class="card" style="flex:1;min-width:140px;text-align:center"><div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Media mensual</div><div style="font-size:24px;font-family:var(--mono);font-weight:700;color:var(--c4)">${mediaMensual.toFixed(0)} €</div></div>
+    <div class="card" style="flex:1;min-width:140px;text-align:center"><div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Posiciones</div><div style="font-size:24px;font-family:var(--mono);font-weight:700;color:var(--c1)">${monthly.length}</div></div>
+    <div class="card" style="flex:1;min-width:140px;text-align:center"><div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px">Rentabilidad</div><div style="font-size:24px;font-family:var(--mono);font-weight:700;color:${rentColor}">${(rentabilidad*100).toFixed(2)}%</div></div>
   </div>
   </div>`;
 
   document.getElementById('inversionesContent').innerHTML=html;
 }
+
+async function clasificar(rowIdx){
+  const activo=document.getElementById('activo-'+rowIdx)?.value.trim();
+  const plataforma=document.getElementById('plat-'+rowIdx)?.value.trim();
+  const tipo=document.getElementById('tipo-'+rowIdx)?.value.trim();
+  const res=document.getElementById('classify-result-'+rowIdx);
+  if(!activo||!plataforma||!tipo){res.style.display='block';res.style.color='var(--red)';res.textContent='Rellena los 3 campos';return;}
+  res.style.display='block';res.style.color='var(--text3)';res.textContent='Guardando...';
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'classifyInversion',token:SESSION_TOKEN,row:rowIdx,activo,plataforma,tipo})});
+    const data=await r.json();
+    if(data.ok){
+      res.style.color='var(--green)';res.textContent='✓ Clasificado';
+      const ri=await api({action:'getMonthData',sheet:'INVERSIONES'});
+      inversionesData=ri.error?[]:ri.rows;
+      setTimeout(()=>renderInversiones(),800);
+    } else {res.style.color='var(--red)';res.textContent='Error: '+(data.error||'desconocido');}
+  }catch(e){res.style.color='var(--red)';res.textContent='Error: '+e.message;}
+}
+
+async function actualizarValor(activo,plataforma,tipo,rowIdx){
+  const input=document.getElementById('valor-'+rowIdx);
+  const val=parseFloat(input?.value);
+  if(isNaN(val)){input.style.borderColor='var(--red)';return;}
+  input.style.borderColor='var(--border2)';
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'updateValorActual',token:SESSION_TOKEN,activo,plataforma,tipo,valorActual:val})});
+    const data=await r.json();
+    if(data.ok){
+      input.style.borderColor='var(--green)';
+      const ri=await api({action:'getMonthData',sheet:'INVERSIONES'});
+      inversionesData=ri.error?[]:ri.rows;
+      setTimeout(()=>renderInversiones(),800);
+    } else {input.style.borderColor='var(--red)';}
+  }catch(e){input.style.borderColor='var(--red)';}
+}
+
 
 function showView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
