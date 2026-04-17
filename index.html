@@ -164,6 +164,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
     <button class="nav-btn" onclick="showView('previsto')" id="nav-previsto"><span class="nav-dot" style="background:var(--c4)"></span>Previsto vs Real</button>
     <button class="nav-btn" onclick="showView('movimientos')" id="nav-movimientos"><span class="nav-dot" style="background:var(--c3)"></span>Movimientos</button>
     <button class="nav-btn" onclick="showView('anadir')" id="nav-anadir"><span class="nav-dot" style="background:var(--c2)"></span>Añadir gasto</button>
+    <button class="nav-btn" onclick="showView('anadir-ingreso')" id="nav-anadir-ingreso"><span class="nav-dot" style="background:var(--green)"></span>Añadir ingreso</button>
     <button class="nav-btn" onclick="showView('chat')" id="nav-chat"><span class="nav-dot" style="background:var(--c5)"></span>Chat IA</button>
     <button class="nav-btn" onclick="showView('analisis')" id="nav-analisis"><span class="nav-dot" style="background:var(--c6)"></span>Análisis IA</button>
     <button class="nav-btn" onclick="showView('patrimonio')" id="nav-patrimonio"><span class="nav-dot" style="background:var(--c4)"></span>Patrimonio</button>
@@ -190,6 +191,21 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
           <div class="field"><label>Mes</label><select id="addSheet"></select></div>
           <button class="add-btn2" id="addBtn" onclick="submitTransaction()">Registrar en Google Sheets</button>
           <div class="add-res" id="addResult"></div>
+        </div>
+      </div>
+    </div>
+    <div class="view" id="view-anadir-ingreso">
+      <div class="card">
+        <div class="card-title">Registrar ingreso</div>
+        <div class="add-grid">
+          <div class="field"><label>Fecha</label><input type="date" id="addIngDate"/></div>
+          <div class="field"><label>Importe (€)</label><input type="number" id="addIngAmount" placeholder="0.00" min="0" step="0.01"/></div>
+          <div class="field full"><label>Descripción</label><input type="text" id="addIngDesc" placeholder="Ej: Nómina marzo"/></div>
+          <div class="field full"><label>Categoría</label><div class="qcats" id="addIngCats"></div></div>
+          <div class="field"><label>Cuenta</label><select id="addIngAccount"><option value="Caja Rural">Caja Rural</option><option value="Santander">Santander</option></select></div>
+          <div class="field"><label>Mes</label><select id="addIngSheet"></select></div>
+          <button class="add-btn2" id="addIngBtn" onclick="submitIngreso()">Registrar ingreso en Google Sheets</button>
+          <div class="add-res" id="addIngResult"></div>
         </div>
       </div>
     </div>
@@ -266,6 +282,7 @@ async function init(){
 }
 
 function fillAddSheets(){
+  fillIngSheets();
   const s=document.getElementById('addSheet');
   const m=sheets.filter(sh=>sh.includes(' - mov'));
   s.innerHTML=m.map(sh=>`<option value="${sh}">${sh.replace(' - mov','')}</option>`).join('');
@@ -582,13 +599,19 @@ function renderSidebar(){
   document.getElementById('sidebarSummary').style.display='block';
 }
 
+const ING_CATS=['Sueldo','Donaciones','Estado (Beca/Hacienda)','Ventas','Inversiones','Ahorro'];
+const ING_EMOJI={'Sueldo':'💼','Donaciones':'🎁','Estado (Beca/Hacienda)':'🏛️','Ventas':'🛒','Inversiones':'📈','Ahorro':'💰'};
+let selectedIngCat='Sueldo';
+
 function initAddCats(){document.getElementById('addCats').innerHTML=CATS.map(c=>`<span class="qcat${c===selectedCat?' sel':''}" onclick="selectCat('${c}')">${EMOJI[c]||''} ${c}</span>`).join('');}
+function initIngCats(){document.getElementById('addIngCats').innerHTML=ING_CATS.map(c=>`<span class="qcat${c===selectedIngCat?' sel':''}" onclick="selectIngCat('${c}')">${ING_EMOJI[c]||''} ${c}</span>`).join('');}
+function selectIngCat(c){selectedIngCat=c;initIngCats();}
 function selectCat(c){selectedCat=c;initAddCats();}
 
 async function submitTransaction(){
   const date=document.getElementById('addDate').value,amount=parseFloat(document.getElementById('addAmount').value),desc=document.getElementById('addDesc').value.trim(),account=document.getElementById('addAccount').value,sheet=document.getElementById('addSheet').value;
   const res=document.getElementById('addResult');res.className='add-res';
-  if(!date||!desc||isNaN(amount)||amount<=0){res.textContent='Rellena fecha, descripción e importe';res.className='add-res err';return;}
+  if(!date||!desc||isNaN(amount)||amount===0){res.textContent='Rellena fecha, descripción e importe';res.className='add-res err';return;}
   const btn=document.getElementById('addBtn');btn.disabled=true;btn.textContent='Guardando...';
   try{
     const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'addTransaction',token:SESSION_TOKEN,date,desc,amount,category:selectedCat,account,sheet})});
@@ -988,15 +1011,18 @@ function renderConfig(){
   </div>`;
 
   // Group summaries
-  html+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">`;
-  for(const [g,gcats] of Object.entries(GRUPOS)){
+  const GROUP_COLORS_CONFIG=['#7C6FFF','#FF6B9D','#4ECDC4','#FFD166','#FF6B6B','#A8E6CF','#A55EEA','#FD9644','#45AAF2'];
+  const groupEntries=Object.entries(GRUPOS).filter(([g])=>grupoPrevs[g]>0);
+  html+=`<div style="display:flex;flex-wrap:wrap;gap:8px">`;
+  groupEntries.forEach(([g],gi)=>{
     const gPrev=grupoPrevs[g]||0;
-    if(!gPrev)continue;
-    html+=`<div style="background:var(--surface2);border-radius:var(--r);padding:10px 12px;border:1px solid var(--border)">
-      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${g}</div>
-      <div style="font-size:16px;font-family:var(--mono);font-weight:600;color:var(--text)">${gPrev.toFixed(0)} €</div>
+    const col=GROUP_COLORS_CONFIG[gi%GROUP_COLORS_CONFIG.length];
+    const colLight=col+'22';
+    html+=`<div style="background:${colLight};border:1px solid ${col}44;border-radius:var(--rl);padding:10px 14px;min-width:100px;flex:1;max-width:150px">
+      <div style="font-size:9px;color:${col};font-family:var(--mono);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px;font-weight:600">${g}</div>
+      <div style="font-size:17px;font-family:var(--mono);font-weight:700;color:${col}">${gPrev.toFixed(0)}<span style="font-size:11px"> €</span></div>
     </div>`;
-  }
+  });
   html+=`</div>`;
 
   // Category table
@@ -1055,6 +1081,39 @@ async function savePrevisto(cat){
   }catch(e){status.textContent='✗';status.style.color='var(--red)';}
 }
 
+function fillIngSheets(){
+  const s=document.getElementById('addIngSheet');
+  if(!s)return;
+  const m=sheets.filter(sh=>sh.includes(' - mov'));
+  s.innerHTML=m.map(sh=>`<option value="${sh}">${sh.replace(' - mov','')}</option>`).join('');
+  const monthNames=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const now=new Date();const curName=monthNames[now.getMonth()]+' '+(now.getFullYear()-2000);
+  const cur=m.find(sh=>sh.replace(' - mov','')===curName);
+  const fallback=m.find(sh=>sh.toLowerCase().includes('marzo'));
+  if(cur)s.value=cur;else if(fallback)s.value=fallback;
+}
+
+async function submitIngreso(){
+  const date=document.getElementById('addIngDate').value;
+  const amount=parseFloat(document.getElementById('addIngAmount').value);
+  const desc=document.getElementById('addIngDesc').value.trim();
+  const account=document.getElementById('addIngAccount').value;
+  const sheet=document.getElementById('addIngSheet').value;
+  const res=document.getElementById('addIngResult');
+  res.className='add-res';
+  if(!date||!desc||isNaN(amount)||amount<=0){res.textContent='Rellena fecha, descripción e importe';res.className='add-res err';return;}
+  const btn=document.getElementById('addIngBtn');btn.disabled=true;btn.textContent='Guardando...';
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({action:'addIngreso',token:SESSION_TOKEN,date,desc,amount,category:selectedIngCat,account,sheet})});
+    const data=await r.json();
+    if(data.error)throw new Error(data.error);
+    res.textContent='✓ Guardado: '+desc+' — '+amount.toFixed(2)+' €';res.className='add-res ok';
+    document.getElementById('addIngDesc').value='';document.getElementById('addIngAmount').value='';
+    await loadSheet();
+  }catch(e){res.textContent='Error: '+e.message;res.className='add-res err';}
+  btn.disabled=false;btn.textContent='Registrar ingreso en Google Sheets';
+}
+
 function showView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -1110,9 +1169,12 @@ document.addEventListener('click',function(e){
   }
 });
 document.getElementById('addDate').value=new Date().toISOString().split('T')[0];
+document.getElementById('addIngDate').value=new Date().toISOString().split('T')[0];
 initAddCats();
+initIngCats();
 </script>
 </body>
 </html>
+
 
  
